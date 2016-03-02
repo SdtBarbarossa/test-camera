@@ -25,7 +25,6 @@ import android.graphics.Point;
 import android.graphics.Rect;
 import android.graphics.SurfaceTexture;
 import android.media.IAudioService;
-import android.os.Binder;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
@@ -41,11 +40,11 @@ import android.util.Log;
 import android.text.TextUtils;
 import android.view.Surface;
 import android.view.SurfaceHolder;
+import android.os.SystemProperties;
 
 import java.io.IOException;
 import java.lang.ref.WeakReference;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 
@@ -161,7 +160,6 @@ public class Camera {
     /* ### QC ADD-ONS: END */
 
     private long mNativeContext; // accessed by native methods
-    private int mCameraId;
     private EventHandler mEventHandler;
     private ShutterCallback mShutterCallback;
     private PictureCallback mRawImageCallback;
@@ -191,7 +189,6 @@ public class Camera {
     private CameraDataCallback mCameraDataCallback;
     private CameraMetaDataCallback mCameraMetaDataCallback;
     /* ### QC ADD-ONS: END */
-    private Binder mTorchToken;
 
     /**
      * Broadcast Action:  A new picture is taken by the camera, and the entry of
@@ -466,7 +463,6 @@ public class Camera {
     }
 
     private int cameraInitVersion(int cameraId, int halVersion) {
-        mCameraId = cameraId;
         mShutterCallback = null;
         mRawImageCallback = null;
         mJpegCallback = null;
@@ -478,7 +474,6 @@ public class Camera {
         mCameraDataCallback = null;
         mCameraMetaDataCallback = null;
         /* ### QC ADD-ONS: END */
-        mTorchToken = new Binder();
 
         Looper looper;
         if ((looper = Looper.myLooper()) != null) {
@@ -489,12 +484,20 @@ public class Camera {
             mEventHandler = null;
         }
 
-        String packageName = ActivityThread.currentPackageName();
-        if (packageName == null && android.os.Process.SYSTEM_UID == Binder.getCallingUid()) {
-            packageName = "android";
-        }
+        String packageName = ActivityThread.currentOpPackageName();
 
-        notifyTorch(true);
+        //Force HAL1 if the package name falls in this bucket
+        String packageList = SystemProperties.get("camera.hal1.packagelist", "");
+        if (packageList.length() > 0) {
+            TextUtils.StringSplitter splitter = new TextUtils.SimpleStringSplitter(',');
+            splitter.setString(packageList);
+            for (String str : splitter) {
+                if (packageName.equals(str)) {
+                    halVersion = CAMERA_HAL_API_VERSION_1_0;
+                    break;
+                }
+            }
+        }
         return native_setup(new WeakReference<Camera>(this), cameraId, halVersion, packageName);
     }
 
@@ -557,22 +560,6 @@ public class Camera {
     Camera() {
     }
 
-    private void notifyTorch(boolean inUse) {
-        IBinder b = ServiceManager.getService(Context.TORCH_SERVICE);
-        ITorchService torchService = ITorchService.Stub.asInterface(b);
-        if (torchService != null) {
-            try {
-                if (inUse) {
-                    torchService.onCameraOpened(mTorchToken, mCameraId);
-                } else {
-                    torchService.onCameraClosed(mTorchToken, mCameraId);
-                }
-            } catch (RemoteException e) {
-                // Ignore
-            }
-        }
-    }
-
     @Override
     protected void finalize() {
         release();
@@ -590,7 +577,6 @@ public class Camera {
      * <p>You must call this as soon as you're done with the Camera object.</p>
      */
     public final void release() {
-        notifyTorch(false);
         native_release();
         mFaceDetectionRunning = false;
     }
@@ -817,6 +803,7 @@ public class Camera {
      * @see android.media.MediaActionSound
      */
     public final void setPreviewCallback(PreviewCallback cb) {
+        android.util.SeempLog.record(66);
         mPreviewCallback = cb;
         mOneShot = false;
         mWithBuffer = false;
@@ -843,6 +830,7 @@ public class Camera {
      * @see android.media.MediaActionSound
      */
     public final void setOneShotPreviewCallback(PreviewCallback cb) {
+        android.util.SeempLog.record(68);
         mPreviewCallback = cb;
         mOneShot = true;
         mWithBuffer = false;
@@ -881,6 +869,7 @@ public class Camera {
      * @see android.media.MediaActionSound
      */
     public final void setPreviewCallbackWithBuffer(PreviewCallback cb) {
+        android.util.SeempLog.record(67);
         mPreviewCallback = cb;
         mOneShot = false;
         mWithBuffer = true;
@@ -1443,6 +1432,7 @@ public class Camera {
      */
     public final void takePicture(ShutterCallback shutter, PictureCallback raw,
             PictureCallback jpeg) {
+        android.util.SeempLog.record(65);
         takePicture(shutter, raw, null, jpeg);
     }
     private native final void native_takePicture(int msgType);
@@ -1478,6 +1468,7 @@ public class Camera {
      */
     public final void takePicture(ShutterCallback shutter, PictureCallback raw,
             PictureCallback postview, PictureCallback jpeg) {
+        android.util.SeempLog.record(65);
         mShutterCallback = shutter;
         mRawImageCallback = raw;
         mPostviewCallback = postview;
@@ -1900,13 +1891,17 @@ public class Camera {
         public int faceRecognised = 0;
     }
 
-    // Error codes match the enum in include/ui/Camera.h
-
     /**
      * Unspecified camera error.
      * @see Camera.ErrorCallback
      */
     public static final int CAMERA_ERROR_UNKNOWN = 1;
+
+    /**
+     * Camera was disconnected due to use by higher priority user.
+     * @see Camera.ErrorCallback
+     */
+    public static final int CAMERA_ERROR_EVICTED = 2;
 
     /**
      * Media server died. In this case, the application must release the
